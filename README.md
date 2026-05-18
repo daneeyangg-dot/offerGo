@@ -9,6 +9,20 @@
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-38bdf8?logo=tailwindcss)](https://tailwindcss.com)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](LICENSE)
 
+## 在线体验
+
+**👉 https://offer-go-beta.vercel.app**
+
+OfferGo 采用 **BYOK（Bring Your Own Key）** 模式 — 你需要自带 DashScope API Key 才能使用 AI 功能。所有数据存浏览器 localStorage，不上传服务器。
+
+**起步三步：**
+
+1. 去 [dashscope.aliyun.com](https://dashscope.aliyun.com) 注册阿里云百炼账号（新用户有免费额度），在「API-KEY 管理」生成一个 Key
+2. 打开 [https://offer-go-beta.vercel.app](https://offer-go-beta.vercel.app)，注册任意手机号 + 密码登录
+3. 右上角 ⚙️「API 设置」把 Key 填进去，开始用
+
+> 💡 建议在自己常用的私人设备上使用，避免简历/JD 等敏感内容残留在公共浏览器。
+
 ## 这是什么
 
 市面上大部分 AI 简历工具都在教你"怎么编一段经历去匹配 JD"。OfferGo 反着来——它把你的真实简历作为**最高事实来源**，先严肃判断你和岗位的匹配度（A/B/C 三级），匹配度太低会直接劝退你别投，**不会**帮你硬凑。匹配上了，它再帮你把已经存在的事实重新组织、对齐 JD 的语言。
@@ -39,35 +53,35 @@
 | 后端 | Express（本地开发）/ Vercel Serverless Functions（生产）|
 | 存储 | localStorage（无后端账户系统）|
 
-## 快速开始
+## 快速开始（本地开发）
 
-**前置要求**：Node.js 18+，[DashScope API Key](https://dashscope.aliyun.com)
+**前置要求**：Node.js 18+，[DashScope API Key](https://dashscope.aliyun.com)（在 UI 中填入）
 
 ```bash
 # 1. 克隆并安装依赖
-git clone <your-repo-url>
-cd offergo
+git clone https://github.com/daneeyangg-dot/offerGo.git
+cd offerGo
 npm install
 
-# 2. 配置环境变量
-cp .env.example .env
-# 编辑 .env，把 DASHSCOPE_API_KEY 改成你自己的 Key
-
-# 3. 启动开发服务器
+# 2. 启动开发服务器
 npm run dev
 # 默认运行在 http://localhost:5001
 ```
 
-启动后用任意手机号 + 密码注册登录（数据存浏览器本地），或者在右上角「⚙️ API 设置」里临时配 Key 试用。
+启动后注册任意手机号 + 密码登录（数据存浏览器本地），首次登录会自动弹出「⚙️ API 设置」让你填 Key。
+
+> BYOK 模式：Key 由用户在前端 UI 配置并存浏览器 localStorage，不写入 .env，也不会被打包到代码里。
 
 ## 部署到 Vercel
 
 项目已经配好了 `vercel.json`，直接连仓库一键部署即可：
 
 1. 把仓库推送到 GitHub
-2. 在 Vercel 导入项目
-3. 在 Vercel 项目设置 → Environment Variables 里添加 `DASHSCOPE_API_KEY`
+2. 在 [Vercel](https://vercel.com/new) 导入项目，Framework Preset 选 Vite
+3. 环境变量**无需配置任何 Key**（BYOK 模式由用户在 UI 里输入）
 4. Deploy
+
+可选：如果你想 embed 应用到自己其他域名，在 Vercel Project → Settings → Environment Variables 添加 `ALLOWED_ORIGINS`（逗号分隔的允许域名列表）。同域使用时无需配置。
 
 ## 项目结构
 

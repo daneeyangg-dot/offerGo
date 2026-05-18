@@ -113,6 +113,13 @@ export default function App() {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('iwaj_api_key') || '');
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
 
+  // First-time onboarding: prompt for API key when a logged-in user has none.
+  useEffect(() => {
+    if (currentUser && !localStorage.getItem('iwaj_api_key')) {
+      setShowApiKeyModal(true);
+    }
+  }, [currentUser]);
+
   // Edit mode for Step 02 / 03
   const [isEditingResume, setIsEditingResume] = useState(false);
   const [isEditingCL, setIsEditingCL] = useState(false);
@@ -1182,7 +1189,7 @@ export default function App() {
                     className="w-full bg-white border border-slate-200 rounded p-3 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-all"
                   />
                   <p className="text-[10px] text-slate-400 mt-2">
-                    从 <a href="https://dashscope.aliyun.com" target="_blank" rel="noopener noreferrer" className="text-pink-500 hover:underline">DashScope 控制台</a> 获取 API Key。Key 仅存储在本地浏览器中。
+                    使用 AI 功能前请先配置你的 DashScope Key — 从 <a href="https://dashscope.aliyun.com" target="_blank" rel="noopener noreferrer" className="text-pink-500 hover:underline">DashScope 控制台</a> 获取（新用户有免费额度）。Key 仅存储在本地浏览器中，不会上传服务器。
                   </p>
                 </div>
                 <div className="flex justify-end gap-3 pt-2">
