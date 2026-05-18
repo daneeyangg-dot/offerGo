@@ -1,0 +1,6 @@
+{
+  "name": "OfferGo",
+  "description": "你的 AI 求职 Copilot。提供岗位适配判断、简历对齐重写、Cover Letter 生成、面试准备与投递追踪，基于真实资料，拒绝编造。",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

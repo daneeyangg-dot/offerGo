@@ -1,0 +1,17 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Vite dev/debug snapshots
+rendered.html
+test.html
+
+# Editor / tool local settings
+.claude/settings.local.json
+.vscode/
+.idea/
