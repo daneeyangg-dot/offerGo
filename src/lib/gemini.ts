@@ -178,6 +178,7 @@ export async function* tailorResumeStream(
 1. 不得编造、虚构任何经历、技能、工具、指标或成果。
 2. 输出内容不得与 Resume 冲突，严禁添加原本不存在的经历。
 3. 输出请保持中文（除非原文是英文且JD要求英文）。
+4.最终内容不得输出思考过程
 
 JD: ${jd}
 Resume: ${resume}
@@ -225,6 +226,7 @@ export async function* generateCoverLetterStream(
 2. 绝不使用空泛、过度热情的表达，通过项目和产出说话。
 3. 语言风格：专业、克制。
 4. 采用标准的求职信格式（中文）。
+5.求职信格式：更新为六段式结构——简短的自我介绍 + 四段正文（匹配点、核心经历+成果、适合方向、入职时间+期待沟通），每段空行分隔，不输出思考过程。
 
 JD: ${jd}
 Resume: ${resume}
