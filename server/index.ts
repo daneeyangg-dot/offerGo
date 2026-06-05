@@ -46,7 +46,7 @@ app.use((req, res, next) => {
 let dbInitialized = false;
 async function ensureDb() {
   if (!dbInitialized) {
-    await initDb();
+    // Temporarily skip DB init to test Vercel timeout
     dbInitialized = true;
   }
 }
