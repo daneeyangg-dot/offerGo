@@ -46,7 +46,7 @@ app.use((req, res, next) => {
 let dbInitialized = false;
 async function ensureDb() {
   if (!dbInitialized) {
-    // Temporarily skip DB init to test Vercel timeout
+    await initDb();
     dbInitialized = true;
   }
 }
@@ -727,7 +727,7 @@ app.get('*', (_req, res) => {
 });
 
 // Local development server
-if (process.env.NODE_ENV !== 'production' || import.meta.url === `file://${process.argv[1]}`) {
+if (!process.env.VERCEL && (process.env.NODE_ENV !== 'production' || import.meta.url === `file://${process.argv[1]}`)) {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

@@ -1,3 +1,4 @@
-export default function handler(req: any, res: any) {
-  res.json({ ok: true, path: req.url, method: req.method });
-}
+import serverless from 'serverless-http';
+import app from '../server/index.js';
+
+export default serverless(app);
