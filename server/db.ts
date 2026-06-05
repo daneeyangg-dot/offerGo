@@ -120,8 +120,7 @@ export async function initDb(): Promise<void> {
     console.error('Turso DB init failed, falling back to memory:', err);
     _db = createClient({ url: 'file::memory:' });
     _dbUrl = 'file::memory:';
-    const client = getClient();
-    await client.batch([
+    await _db.batch([
       `CREATE TABLE IF NOT EXISTS users (
         phone TEXT PRIMARY KEY,
         salt TEXT NOT NULL,
