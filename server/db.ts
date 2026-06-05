@@ -4,17 +4,35 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Support both local file (development) and Turso cloud (production)
-const databaseUrl = process.env.TURSO_DATABASE_URL || `file:${path.resolve(__dirname, '../data/app.db')}`;
-const authToken = process.env.TURSO_AUTH_TOKEN;
+let _db: Client | null = null;
 
-export const db: Client = createClient({
-  url: databaseUrl,
-  ...(authToken ? { authToken } : {}),
+function getClient(): Client {
+  if (!_db) {
+    const databaseUrl = process.env.TURSO_DATABASE_URL || `file:${path.resolve(__dirname, '../data/app.db')}`;
+    const authToken = process.env.TURSO_AUTH_TOKEN;
+    _db = createClient({
+      url: databaseUrl,
+      ...(authToken ? { authToken } : {}),
+    });
+  }
+  return _db;
+}
+
+// Lazy re-export for backward compat
+export const db: Client = new Proxy({} as Client, {
+  get(_target, prop) {
+    const client = getClient();
+    const value = client[prop as keyof Client];
+    if (typeof value === 'function') {
+      return value.bind(client);
+    }
+    return value;
+  },
 });
 
 export async function initDb(): Promise<void> {
-  await db.batch([
+  const client = getClient();
+  await client.batch([
     `CREATE TABLE IF NOT EXISTS users (
       phone TEXT PRIMARY KEY,
       salt TEXT NOT NULL,
@@ -92,7 +110,7 @@ export async function getRow<T = Record<string, unknown>>(
   sql: string,
   args: (string | number | null | undefined)[]
 ): Promise<T | undefined> {
-  const result = await db.execute({ sql, args });
+  const result = await getClient().execute({ sql, args });
   return result.rows[0] as T | undefined;
 }
 
@@ -101,7 +119,7 @@ export async function getRows<T = Record<string, unknown>>(
   sql: string,
   args: (string | number | null | undefined)[]
 ): Promise<T[]> {
-  const result = await db.execute({ sql, args });
+  const result = await getClient().execute({ sql, args });
   return result.rows as T[];
 }
 
@@ -110,7 +128,7 @@ export async function runQuery(
   sql: string,
   args: (string | number | null | undefined)[]
 ): Promise<{ changes: number }> {
-  const result = await db.execute({ sql, args });
+  const result = await getClient().execute({ sql, args });
   return { changes: result.rowsAffected };
 }
 
