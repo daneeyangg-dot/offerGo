@@ -10,7 +10,7 @@ function getClient(): Client {
   if (!_db) {
     const isVercel = process.env.VERCEL === '1';
     const defaultDbPath = isVercel
-      ? 'file:/tmp/app.db'
+      ? 'file::memory:'
       : `file:${path.resolve(__dirname, '../data/app.db')}`;
     const databaseUrl = process.env.TURSO_DATABASE_URL || defaultDbPath;
     const authToken = process.env.TURSO_AUTH_TOKEN;
