@@ -43,8 +43,9 @@ export const db: Client = new Proxy({} as Client, {
 });
 
 export async function initDb(): Promise<void> {
-  const client = getClient();
-  await client.batch([
+  try {
+    const client = getClient();
+    await client.batch([
     `CREATE TABLE IF NOT EXISTS users (
       phone TEXT PRIMARY KEY,
       salt TEXT NOT NULL,
@@ -115,6 +116,83 @@ export async function initDb(): Promise<void> {
       created_at INTEGER NOT NULL
     )`,
   ]);
+  } catch (err) {
+    console.error('Turso DB init failed, falling back to memory:', err);
+    _db = createClient({ url: 'file::memory:' });
+    _dbUrl = 'file::memory:';
+    const client = getClient();
+    await client.batch([
+      `CREATE TABLE IF NOT EXISTS users (
+        phone TEXT PRIMARY KEY,
+        salt TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS jds (
+        id TEXT PRIMARY KEY,
+        user_phone TEXT NOT NULL,
+        company TEXT NOT NULL,
+        position TEXT,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS resumes (
+        id TEXT PRIMARY KEY,
+        user_phone TEXT NOT NULL,
+        name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS applications (
+        id TEXT PRIMARY KEY,
+        user_phone TEXT NOT NULL,
+        company TEXT NOT NULL,
+        position TEXT NOT NULL,
+        jd TEXT,
+        tailored_resume TEXT,
+        cover_letter TEXT,
+        status TEXT NOT NULL,
+        priority TEXT NOT NULL,
+        notes TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS drafts (
+        user_phone TEXT NOT NULL,
+        type TEXT NOT NULL,
+        data TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (user_phone, type)
+      )`,
+      `CREATE TABLE IF NOT EXISTS analysis_history (
+        id TEXT PRIMARY KEY,
+        user_phone TEXT NOT NULL,
+        company TEXT,
+        position TEXT,
+        jd TEXT,
+        resume TEXT,
+        extra_docs TEXT,
+        fit_rating TEXT,
+        role_type TEXT,
+        seniority_level TEXT,
+        score INTEGER,
+        key_reasons TEXT,
+        recommendation TEXT,
+        optimized_resume TEXT,
+        cover_letter TEXT,
+        created_at INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS interview_history (
+        id TEXT PRIMARY KEY,
+        user_phone TEXT NOT NULL,
+        type TEXT NOT NULL,
+        jd TEXT,
+        resume TEXT,
+        questions TEXT,
+        created_at INTEGER NOT NULL
+      )`,
+    ]);
+  }
 }
 
 // Helper to safely get a single row
