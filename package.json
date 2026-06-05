@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "description": "基于真实简历、拒绝编造的 AI 求职 Copilot — 岗位适配判断、简历对齐重写、Cover Letter 生成、面试准备、投递追踪。",
   "type": "module",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "vite --port=5001 --host=0.0.0.0",
     "server": "tsx server/index.ts",
