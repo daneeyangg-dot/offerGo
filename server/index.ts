@@ -2,9 +2,16 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
-// TEMP: removed db imports to test timeout
-// import { initDb, getRow, getRows, runQuery } from './db.js';
-// import type { ... } from './db.js';
+import { initDb, getRow, getRows, runQuery } from './db.js';
+import type {
+  UserRow,
+  JDRow,
+  ResumeRow,
+  ApplicationRow,
+  DraftRow,
+  AnalysisHistoryRow,
+  InterviewHistoryRow,
+} from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
