@@ -27,8 +27,14 @@ import {
   Settings,
   Edit3,
   Check,
+  History,
+  Trash2,
+  Clock,
 } from 'lucide-react';
-import { analyzeJobFit, tailorResumeStream, generateCoverLetterStream, type AnalysisResult } from './lib/gemini';
+import {
+  analyzeJobFit, tailorResumeStream, generateCoverLetterStream, type AnalysisResult,
+  getApiConfig, saveApiConfig,
+} from './lib/gemini';
 import ReactMarkdown from 'react-markdown';
 import { saveApplication } from './lib/storage';
 import { cn } from './lib/utils';
@@ -41,8 +47,16 @@ import {
   setSession,
   clearSession,
   migrateLegacyData,
-  getUserStorageKey,
 } from './lib/auth';
+import {
+  getJDs,
+  getResumes,
+  getDraft,
+  saveDraft,
+  createAnalysisHistory,
+  getAnalysisHistory,
+  deleteAnalysisHistory,
+} from './lib/api';
 import type { View, JobApplication, User } from './types';
 
 type Step = 'input' | 'analysis' | 'tailor' | 'cl';
@@ -109,13 +123,13 @@ export default function App() {
   const [jdSearch, setJdSearch] = useState('');
   const [resumeSearch, setResumeSearch] = useState('');
 
-  // API Key config
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('iwaj_api_key') || '');
+  // API config (multi-provider)
+  const [apiConfig, setApiConfig] = useState(() => getApiConfig());
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
 
-  // First-time onboarding: prompt for API key when a logged-in user has none.
+  // First-time onboarding: prompt for API config when a logged-in user has none.
   useEffect(() => {
-    if (currentUser && !localStorage.getItem('iwaj_api_key')) {
+    if (currentUser && !getApiConfig().apiKey) {
       setShowApiKeyModal(true);
     }
   }, [currentUser]);
@@ -124,33 +138,117 @@ export default function App() {
   const [isEditingResume, setIsEditingResume] = useState(false);
   const [isEditingCL, setIsEditingCL] = useState(false);
 
-  // Load data from material library
-  const getJDList = (): JDItem[] => {
-    if (!currentUser) return [];
-    const jdKey = getUserStorageKey(currentUser.phone, 'jds');
-    const saved = localStorage.getItem(jdKey);
-    if (saved) {
-      try { return JSON.parse(saved); } catch { return []; }
-    }
-    return [];
-  };
+  // Analysis history
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [analysisHistory, setAnalysisHistory] = useState<Array<{
+    id: string; company: string; position: string; fitRating: string;
+    score: number; recommendation: string; createdAt: number;
+  }>>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
-  const getResumeList = (): ResumeItem[] => {
-    if (!currentUser) return [];
-    const resumeKey = getUserStorageKey(currentUser.phone, 'resumes');
-    const saved = localStorage.getItem(resumeKey);
-    if (saved) {
-      try { return JSON.parse(saved); } catch { return []; }
+  // Material library data (synced from server)
+  const [jdList, setJDList] = useState<JDItem[]>([]);
+  const [resumeList, setResumeList] = useState<ResumeItem[]>([]);
+
+  // Load data from server when user changes
+  useEffect(() => {
+    if (!currentUser) {
+      setJDList([]);
+      setResumeList([]);
+      return;
     }
-    return [];
-  };
+    getJDs().then(setJDList).catch(() => setJDList([]));
+    getResumes().then(setResumeList).catch(() => setResumeList([]));
+  }, [currentUser]);
+
+  const getJDList = (): JDItem[] => jdList;
+  const getResumeList = (): ResumeItem[] => resumeList;
 
   // Draft persistence
-  const getDraftKey = () => currentUser ? getUserStorageKey(currentUser.phone, 'analyzer-draft') : '';
-
-  const clearDraft = () => {
+  const clearDraft = async () => {
     if (!currentUser) return;
-    localStorage.removeItem(getDraftKey());
+    try {
+      await saveDraft('analyzer', {});
+    } catch {
+      // ignore
+    }
+  };
+
+  // Analysis history functions
+  const loadAnalysisHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const items = await getAnalysisHistory();
+      setAnalysisHistory(items);
+    } catch {
+      setAnalysisHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const saveCurrentAnalysis = async () => {
+    if (!analysis || !currentUser) return;
+    const lines = jd.split('\n').filter((l) => l.trim());
+    const companyGuess = lines[0]?.length < 30 ? lines[0] : '';
+    const positionGuess = lines.find(
+      (l) => l.includes('岗位') || l.includes('职位') || l.includes('工程师') || l.includes('经理')
+    ) || '';
+    try {
+      await createAnalysisHistory({
+        id: crypto.randomUUID(),
+        company: companyGuess,
+        position: positionGuess,
+        jd,
+        resume,
+        extraDocs,
+        fitRating: analysis.fitRating,
+        roleType: analysis.roleType,
+        seniorityLevel: analysis.seniorityLevel,
+        score: analysis.score,
+        keyReasons: analysis.keyReasons,
+        recommendation: analysis.recommendation,
+        optimizedResume,
+        coverLetter,
+      });
+      alert('已保存到分析历史');
+    } catch {
+      alert('保存失败');
+    }
+  };
+
+  const loadHistoryItem = async (id: string) => {
+    try {
+      const { getAnalysisHistoryDetail } = await import('./lib/api');
+      const item = await getAnalysisHistoryDetail(id);
+      setJd(item.jd);
+      setResume(item.resume);
+      setExtraDocs(item.extraDocs);
+      setAnalysis({
+        roleType: item.roleType,
+        seniorityLevel: item.seniorityLevel,
+        fitRating: item.fitRating as 'A' | 'B' | 'C',
+        keyReasons: item.keyReasons,
+        recommendation: item.recommendation,
+        score: item.score,
+      });
+      setOptimizedResume(item.optimizedResume);
+      setCoverLetter(item.coverLetter);
+      setStep('cl');
+      setShowHistoryModal(false);
+    } catch {
+      alert('加载失败');
+    }
+  };
+
+  const removeHistoryItem = async (id: string) => {
+    if (!confirm('确定删除这条历史记录吗？')) return;
+    try {
+      await deleteAnalysisHistory(id);
+      await loadAnalysisHistory();
+    } catch {
+      alert('删除失败');
+    }
   };
 
   // Results
@@ -161,31 +259,33 @@ export default function App() {
   // Load draft when user logs in
   useEffect(() => {
     if (!currentUser) return;
-    const key = getDraftKey();
-    const saved = localStorage.getItem(key);
-    if (saved) {
+    getDraft('analyzer').then((draft) => {
+      if (!draft?.data) return;
       try {
-        const draft = JSON.parse(saved);
-        if (draft.jd !== undefined) setJd(draft.jd);
-        if (draft.resume !== undefined) setResume(draft.resume);
-        if (draft.extraDocs !== undefined) setExtraDocs(draft.extraDocs);
-        if (draft.step) setStep(draft.step);
-        if (draft.analysis) setAnalysis(draft.analysis);
-        if (draft.optimizedResume !== undefined) setOptimizedResume(draft.optimizedResume);
-        if (draft.coverLetter !== undefined) setCoverLetter(draft.coverLetter);
+        const d = draft.data as Record<string, unknown>;
+        if (d.jd !== undefined) setJd(d.jd as string);
+        if (d.resume !== undefined) setResume(d.resume as string);
+        if (d.extraDocs !== undefined) setExtraDocs(d.extraDocs as string);
+        if (d.step) setStep(d.step as Step);
+        if (d.analysis) setAnalysis(d.analysis as AnalysisResult);
+        if (d.optimizedResume !== undefined) setOptimizedResume(d.optimizedResume as string);
+        if (d.coverLetter !== undefined) setCoverLetter(d.coverLetter as string);
       } catch {
         // ignore corrupt draft
       }
-    }
+    }).catch(() => {
+      // ignore
+    });
   }, [currentUser]);
 
   // Auto-save draft when inputs or results change
   useEffect(() => {
     if (!currentUser) return;
-    const key = getDraftKey();
-    const draft = { jd, resume, extraDocs, step, analysis, optimizedResume, coverLetter, updatedAt: Date.now() };
+    const draft = { jd, resume, extraDocs, step, analysis, optimizedResume, coverLetter };
     const timer = setTimeout(() => {
-      localStorage.setItem(key, JSON.stringify(draft));
+      saveDraft('analyzer', draft).catch(() => {
+        // ignore save errors
+      });
     }, 500);
     return () => clearTimeout(timer);
   }, [jd, resume, extraDocs, step, analysis, optimizedResume, coverLetter]);
@@ -230,7 +330,8 @@ export default function App() {
       setAnalysis(result);
       setStep('analysis');
     } catch (e) {
-      setError('分析失败，请稍后重试');
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`分析失败: ${msg}`);
       console.error(e);
     } finally {
       setIsLoading(false);
@@ -247,7 +348,8 @@ export default function App() {
         setOptimizedResume((prev) => prev + chunk);
       }
     } catch (e) {
-      setError('简历优化失败');
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`简历优化失败: ${msg}`);
       console.error(e);
       setStep('analysis');
     } finally {
@@ -265,7 +367,8 @@ export default function App() {
         setCoverLetter((prev) => prev + chunk);
       }
     } catch (e) {
-      setError('Cover Letter 生成失败');
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Cover Letter 生成失败: ${msg}`);
       console.error(e);
       setStep('tailor');
     } finally {
@@ -295,7 +398,7 @@ export default function App() {
     setShowSaveModal(true);
   };
 
-  const handleSaveToTracker = () => {
+  const handleSaveToTracker = async () => {
     if (!saveForm.company.trim() || !saveForm.position.trim()) {
       alert('公司名和职位名不能为空');
       return;
@@ -314,9 +417,13 @@ export default function App() {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    saveApplication(currentUser.phone, app);
-    setShowSaveModal(false);
-    alert('已保存到投递追踪');
+    try {
+      await saveApplication(currentUser.phone, app);
+      setShowSaveModal(false);
+      alert('已保存到投递追踪');
+    } catch {
+      alert('保存失败，请稍后重试');
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -527,22 +634,37 @@ export default function App() {
                       战略适配判断
                     </h3>
                   </div>
-                  <div className="flex items-center gap-4 bg-pink-50/30 px-6 py-4 rounded-lg border border-pink-50">
-                    <div className="text-right">
-                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">
-                        适配等级
-                      </div>
-                      <div
-                        className={cn(
-                          'text-4xl font-black tabular-nums tracking-tighter leading-none',
-                          analysis.fitRating === 'A'
-                            ? 'text-emerald-500'
-                            : analysis.fitRating === 'B'
-                              ? 'text-amber-500'
-                              : 'text-rose-500'
-                        )}
-                      >
-                        {analysis.fitRating}
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => { loadAnalysisHistory(); setShowHistoryModal(true); }}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-pink-600 transition-all text-[10px] font-bold uppercase tracking-widest"
+                    >
+                      <History className="w-4 h-4" /> 历史记录
+                    </button>
+                    <button
+                      onClick={saveCurrentAnalysis}
+                      disabled={!analysis}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-pink-600 text-white hover:bg-pink-700 transition-all text-[10px] font-bold uppercase tracking-widest disabled:opacity-50"
+                    >
+                      <Save className="w-4 h-4" /> 保存分析
+                    </button>
+                    <div className="flex items-center gap-4 bg-pink-50/30 px-6 py-4 rounded-lg border border-pink-50">
+                      <div className="text-right">
+                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">
+                          适配等级
+                        </div>
+                        <div
+                          className={cn(
+                            'text-4xl font-black tabular-nums tracking-tighter leading-none',
+                            analysis.fitRating === 'A'
+                              ? 'text-emerald-500'
+                              : analysis.fitRating === 'B'
+                                ? 'text-amber-500'
+                                : 'text-rose-500'
+                          )}
+                        >
+                          {analysis.fitRating}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1149,6 +1271,98 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Analysis History Modal */}
+      <AnimatePresence>
+        {showHistoryModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+            onClick={(e) => e.target === e.currentTarget && setShowHistoryModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <History className="w-5 h-5 text-pink-500" />
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">分析历史记录</h3>
+                </div>
+                <button onClick={() => setShowHistoryModal(false)} className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+                {historyLoading ? (
+                  <div className="text-center py-12 text-slate-400">
+                    <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin" />
+                    <p className="text-sm font-medium">加载中...</p>
+                  </div>
+                ) : analysisHistory.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400">
+                    <History className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                    <p className="text-sm font-medium">暂无分析历史</p>
+                    <p className="text-[10px] mt-1">完成分析后点击"保存分析"即可记录</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {analysisHistory.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => loadHistoryItem(item.id)}
+                        className="w-full text-left bg-white rounded-lg border border-slate-200 p-4 hover:border-pink-300 hover:shadow-sm hover:bg-pink-50/30 transition-all group"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={cn(
+                                "px-2 py-0.5 rounded text-[10px] font-bold border",
+                                item.fitRating === 'A'
+                                  ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                                  : item.fitRating === 'B'
+                                    ? 'bg-amber-100 text-amber-700 border-amber-200'
+                                    : 'bg-rose-100 text-rose-700 border-rose-200'
+                              )}>
+                                {item.fitRating}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-bold">{item.score}分</span>
+                              <span className="text-[10px] text-slate-400 font-bold opacity-0 group-hover:opacity-100 transition-opacity">
+                                点击加载完整分析
+                              </span>
+                            </div>
+                            <p className="text-sm font-bold text-slate-800 truncate">
+                              {item.company || '未识别公司'} · {item.position || '未识别职位'}
+                            </p>
+                            <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">
+                              {item.recommendation || '无摘要'}
+                            </p>
+                            <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-1">
+                              <Clock className="w-3 h-3" />
+                              {new Date(item.createdAt).toLocaleDateString()} {new Date(item.createdAt).toLocaleTimeString()}
+                            </p>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeHistoryItem(item.id); }}
+                            className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors shrink-0"
+                            title="删除"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* API Key Config Modal */}
       <AnimatePresence>
         {showApiKeyModal && (
@@ -1177,35 +1391,67 @@ export default function App() {
                 </button>
               </div>
               <div className="p-6 space-y-4">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-1.5 block">
-                    DashScope API Key
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] block">
+                    API Base URL
+                  </label>
+                  <input
+                    type="text"
+                    value={apiConfig.baseUrl}
+                    onChange={(e) => setApiConfig((prev) => ({ ...prev, baseUrl: e.target.value }))}
+                    placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    className="w-full bg-white border border-slate-200 rounded p-3 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-all"
+                  />
+                  <p className="text-[10px] text-slate-400">
+                    支持：DashScope、OpenAI、Moonshot、DeepSeek 等任何 OpenAI 兼容接口
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] block">
+                    API Key
                   </label>
                   <input
                     type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
+                    value={apiConfig.apiKey}
+                    onChange={(e) => setApiConfig((prev) => ({ ...prev, apiKey: e.target.value }))}
                     placeholder="sk-xxxxxxxxxxxxxxxx"
                     className="w-full bg-white border border-slate-200 rounded p-3 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-all"
                   />
-                  <p className="text-[10px] text-slate-400 mt-2">
-                    使用 AI 功能前请先配置你的 DashScope Key — 从 <a href="https://dashscope.aliyun.com" target="_blank" rel="noopener noreferrer" className="text-pink-500 hover:underline">DashScope 控制台</a> 获取（新用户有免费额度）。Key 仅存储在本地浏览器中，不会上传服务器。
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] block">
+                    模型名称
+                  </label>
+                  <input
+                    type="text"
+                    value={apiConfig.model}
+                    onChange={(e) => setApiConfig((prev) => ({ ...prev, model: e.target.value }))}
+                    placeholder="qwen-plus"
+                    className="w-full bg-white border border-slate-200 rounded p-3 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-all"
+                  />
+                  <p className="text-[10px] text-slate-400">
+                    例：qwen-plus、gpt-4o-mini、moonshot-v1-8k、deepseek-chat
+                  </p>
+                </div>
+                <div className="bg-slate-50 rounded p-3 border border-slate-100">
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    所有配置仅保存在本地浏览器，不会上传服务器。如果某个厂商访问不通，可切换其他厂商。
                   </p>
                 </div>
                 <div className="flex justify-end gap-3 pt-2">
                   <button
-                    onClick={() => setShowApiKeyModal(false)}
+                    onClick={() => {
+                      // Reset to defaults
+                      setApiConfig(getApiConfig());
+                      setShowApiKeyModal(false);
+                    }}
                     className="px-5 py-2.5 border border-slate-200 text-slate-600 rounded font-bold uppercase tracking-widest text-[10px] hover:bg-slate-50 transition-all"
                   >
                     取消
                   </button>
                   <button
                     onClick={() => {
-                      if (apiKey.trim()) {
-                        localStorage.setItem('iwaj_api_key', apiKey.trim());
-                      } else {
-                        localStorage.removeItem('iwaj_api_key');
-                      }
+                      saveApiConfig(apiConfig);
                       setShowApiKeyModal(false);
                     }}
                     className="bg-pink-600 hover:bg-pink-700 text-white px-5 py-2.5 rounded font-bold uppercase tracking-widest text-[10px] transition-all"

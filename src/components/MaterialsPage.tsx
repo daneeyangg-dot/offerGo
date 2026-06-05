@@ -5,7 +5,7 @@ import {
   Briefcase, ChevronDown, ChevronUp, Search
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { getUserStorageKey } from '../lib/auth';
+import { getJDs, getResumes, createJD, updateJD, deleteJD, createResume, updateResume, deleteResume } from '../lib/api';
 import type { JDEntry, ResumeEntry } from '../types';
 
 interface MaterialsPageProps {
@@ -30,46 +30,45 @@ export default function MaterialsPage({ userPhone }: MaterialsPageProps) {
   const [resumeForm, setResumeForm] = useState({ name: '', content: '' });
   const [resumeSearch, setResumeSearch] = useState('');
 
-  const jdKey = getUserStorageKey(userPhone, 'jds');
-  const resumeKey = getUserStorageKey(userPhone, 'resumes');
-
   useEffect(() => {
     loadJDs();
     loadResumes();
   }, [userPhone]);
 
-  const loadJDs = () => {
-    const raw = localStorage.getItem(jdKey);
-    setJDs(raw ? JSON.parse(raw) : []);
+  const loadJDs = async () => {
+    try {
+      const items = await getJDs();
+      setJDs(items);
+    } catch {
+      setJDs([]);
+    }
   };
 
-  const loadResumes = () => {
-    const raw = localStorage.getItem(resumeKey);
-    setResumes(raw ? JSON.parse(raw) : []);
+  const loadResumes = async () => {
+    try {
+      const items = await getResumes();
+      setResumes(items);
+    } catch {
+      setResumes([]);
+    }
   };
 
-  const saveJDs = (items: JDEntry[]) => {
-    localStorage.setItem(jdKey, JSON.stringify(items));
-    setJDs(items);
-  };
-
-  const saveResumes = (items: ResumeEntry[]) => {
-    localStorage.setItem(resumeKey, JSON.stringify(items));
-    setResumes(items);
-  };
-
-  const handleSaveJD = () => {
+  const handleSaveJD = async () => {
     if (!jdForm.company.trim() || !jdForm.content.trim()) {
       alert('公司名和JD内容不能为空');
       return;
     }
     if (editingJD) {
-      const updated = jds.map(j =>
-        j.id === editingJD
-          ? { ...j, company: jdForm.company, position: jdForm.position, content: jdForm.content }
-          : j
-      );
-      saveJDs(updated);
+      try {
+        await updateJD(editingJD, {
+          company: jdForm.company,
+          position: jdForm.position,
+          content: jdForm.content,
+        });
+        await loadJDs();
+      } catch {
+        alert('保存失败');
+      }
     } else {
       const newJD: JDEntry = {
         id: crypto.randomUUID(),
@@ -78,16 +77,26 @@ export default function MaterialsPage({ userPhone }: MaterialsPageProps) {
         content: jdForm.content,
         createdAt: Date.now(),
       };
-      saveJDs([newJD, ...jds]);
+      try {
+        await createJD(newJD);
+        await loadJDs();
+      } catch {
+        alert('添加失败');
+      }
     }
     setJDForm({ company: '', position: '', content: '' });
     setEditingJD(null);
     setShowJDForm(false);
   };
 
-  const handleDeleteJD = (id: string) => {
+  const handleDeleteJD = async (id: string) => {
     if (!confirm('确定删除这条JD吗？')) return;
-    saveJDs(jds.filter(j => j.id !== id));
+    try {
+      await deleteJD(id);
+      await loadJDs();
+    } catch {
+      alert('删除失败');
+    }
   };
 
   const handleEditJD = (jd: JDEntry) => {
@@ -96,18 +105,21 @@ export default function MaterialsPage({ userPhone }: MaterialsPageProps) {
     setShowJDForm(true);
   };
 
-  const handleSaveResume = () => {
+  const handleSaveResume = async () => {
     if (!resumeForm.name.trim() || !resumeForm.content.trim()) {
       alert('简历名称和内容不能为空');
       return;
     }
     if (editingResume) {
-      const updated = resumes.map(r =>
-        r.id === editingResume
-          ? { ...r, name: resumeForm.name, content: resumeForm.content, updatedAt: Date.now() }
-          : r
-      );
-      saveResumes(updated);
+      try {
+        await updateResume(editingResume, {
+          name: resumeForm.name,
+          content: resumeForm.content,
+        });
+        await loadResumes();
+      } catch {
+        alert('保存失败');
+      }
     } else {
       const newResume: ResumeEntry = {
         id: crypto.randomUUID(),
@@ -115,16 +127,26 @@ export default function MaterialsPage({ userPhone }: MaterialsPageProps) {
         content: resumeForm.content,
         updatedAt: Date.now(),
       };
-      saveResumes([newResume, ...resumes]);
+      try {
+        await createResume(newResume);
+        await loadResumes();
+      } catch {
+        alert('添加失败');
+      }
     }
     setResumeForm({ name: '', content: '' });
     setEditingResume(null);
     setShowResumeForm(false);
   };
 
-  const handleDeleteResume = (id: string) => {
+  const handleDeleteResume = async (id: string) => {
     if (!confirm('确定删除这条简历吗？')) return;
-    saveResumes(resumes.filter(r => r.id !== id));
+    try {
+      await deleteResume(id);
+      await loadResumes();
+    } catch {
+      alert('删除失败');
+    }
   };
 
   const handleEditResume = (r: ResumeEntry) => {

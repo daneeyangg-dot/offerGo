@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Code2, MessageSquare, Target, Loader2, Send, ChevronDown,
   ChevronUp, BookOpen, BrainCircuit, User, Bot, Sparkles, FileSearch, FileText, AlertCircle,
-  Search, Building2, UserCircle, X
+  Search, Building2, UserCircle, X, Save, History, Trash2, Clock
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
@@ -14,7 +14,10 @@ import {
   type BehavioralQuestion,
   type SimMessage,
 } from '../lib/gemini';
-import { getUserStorageKey } from '../lib/auth';
+import {
+  getDraft, saveDraft, getJDs, getResumes,
+  createInterviewHistory, getInterviewHistory, getInterviewHistoryDetail, deleteInterviewHistory,
+} from '../lib/api';
 import type { InterviewTab } from '../types';
 
 interface InterviewPrepProps {
@@ -67,38 +70,92 @@ export default function InterviewPrep({ userPhone }: InterviewPrepProps) {
   const [jdSearch, setJdSearch] = useState('');
   const [resumeSearch, setResumeSearch] = useState('');
 
-  // Draft persistence
-  const draftKey = getUserStorageKey(userPhone, 'interview-draft');
+  // Interview history
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [interviewHistory, setInterviewHistory] = useState<Array<{
+    id: string; type: string; jd: string; createdAt: number;
+  }>>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
+  const loadInterviewHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const items = await getInterviewHistory();
+      setInterviewHistory(items);
+    } catch {
+      setInterviewHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const saveCurrentInterview = async (type: 'technical' | 'behavioral') => {
+    const questions = type === 'technical' ? techQuestions : behavioralQuestions;
+    if (questions.length === 0) return;
+    try {
+      await createInterviewHistory({
+        id: crypto.randomUUID(),
+        type,
+        jd,
+        resume,
+        questions,
+      });
+      alert('已保存到面试历史');
+    } catch {
+      alert('保存失败');
+    }
+  };
+
+  const removeHistoryItem = async (id: string) => {
+    if (!confirm('确定删除这条历史记录吗？')) return;
+    try {
+      await deleteInterviewHistory(id);
+      await loadInterviewHistory();
+    } catch {
+      alert('删除失败');
+    }
+  };
+
+  const loadHistoryItem = async (id: string) => {
+    try {
+      const item = await getInterviewHistoryDetail(id);
+      if (item.jd !== undefined) setJd(item.jd);
+      if (item.resume !== undefined) setResume(item.resume);
+      if (item.type === 'technical') {
+        setTechQuestions((item.questions || []) as TechnicalQuestion[]);
+        setActiveTab('technical');
+      } else {
+        setBehavioralQuestions((item.questions || []) as BehavioralQuestion[]);
+        setActiveTab('behavioral');
+      }
+      setShowHistoryModal(false);
+    } catch {
+      alert('加载失败');
+    }
+  };
+
+  // Load material library and draft from server
   useEffect(() => {
     // Load draft
-    const draftRaw = localStorage.getItem(draftKey);
-    if (draftRaw) {
+    getDraft('interview').then((draft) => {
+      if (!draft?.data) return;
       try {
-        const draft = JSON.parse(draftRaw);
-        if (draft.jd !== undefined) setJd(draft.jd);
-        if (draft.resume !== undefined) setResume(draft.resume);
-        if (Array.isArray(draft.techQuestions)) setTechQuestions(draft.techQuestions);
-        if (Array.isArray(draft.behavioralQuestions)) setBehavioralQuestions(draft.behavioralQuestions);
-        if (Array.isArray(draft.simMessages)) setSimMessages(draft.simMessages);
-        if (typeof draft.simStarted === 'boolean') setSimStarted(draft.simStarted);
-        if (typeof draft.activeTab === 'string') setActiveTab(draft.activeTab as InterviewTab);
+        const d = draft.data as Record<string, unknown>;
+        if (d.jd !== undefined) setJd(d.jd as string);
+        if (d.resume !== undefined) setResume(d.resume as string);
+        if (Array.isArray(d.techQuestions)) setTechQuestions(d.techQuestions as TechnicalQuestion[]);
+        if (Array.isArray(d.behavioralQuestions)) setBehavioralQuestions(d.behavioralQuestions as BehavioralQuestion[]);
+        if (Array.isArray(d.simMessages)) setSimMessages(d.simMessages as SimMessage[]);
+        if (typeof d.simStarted === 'boolean') setSimStarted(d.simStarted);
+        if (typeof d.activeTab === 'string') setActiveTab(d.activeTab as InterviewTab);
       } catch {
         // ignore corrupt draft
       }
-    }
+    }).catch(() => { /* ignore */ });
 
     // Load material library
-    const jdKey = getUserStorageKey(userPhone, 'jds');
-    const resumeKey = getUserStorageKey(userPhone, 'resumes');
-    const jdRaw = localStorage.getItem(jdKey);
-    const resumeRaw = localStorage.getItem(resumeKey);
-    if (jdRaw) {
-      try { setJDList(JSON.parse(jdRaw)); } catch { setJDList([]); }
-    }
-    if (resumeRaw) {
-      try { setResumeList(JSON.parse(resumeRaw)); } catch { setResumeList([]); }
-    }
+    getJDs().then((items) => setJDList(items)).catch(() => setJDList([]));
+    getResumes().then((items) => setResumeList(items)).catch(() => setResumeList([]));
   }, [userPhone]);
 
   // Auto-save draft (including all interview state)
@@ -111,10 +168,9 @@ export default function InterviewPrep({ userPhone }: InterviewPrepProps) {
       simMessages,
       simStarted,
       activeTab,
-      updatedAt: Date.now(),
     };
     const timer = setTimeout(() => {
-      localStorage.setItem(draftKey, JSON.stringify(draft));
+      saveDraft('interview', draft).catch(() => { /* ignore */ });
     }, 500);
     return () => clearTimeout(timer);
   }, [jd, resume, techQuestions, behavioralQuestions, simMessages, simStarted, activeTab]);
@@ -135,7 +191,8 @@ export default function InterviewPrep({ userPhone }: InterviewPrepProps) {
       setTechQuestions(questions);
       setExpandedTech(new Set());
     } catch (e) {
-      setError('技术面试题生成失败');
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`技术面试题生成失败: ${msg}`);
       console.error(e);
     } finally {
       setTechLoading(false);
@@ -154,7 +211,8 @@ export default function InterviewPrep({ userPhone }: InterviewPrepProps) {
       setBehavioralQuestions(questions);
       setExpandedBehavioral(new Set());
     } catch (e) {
-      setError('行为面试题生成失败');
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`行为面试题生成失败: ${msg}`);
       console.error(e);
     } finally {
       setBehavioralLoading(false);
@@ -278,22 +336,30 @@ export default function InterviewPrep({ userPhone }: InterviewPrepProps) {
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 bg-slate-100 p-1 rounded-lg border border-slate-200">
-        {TAB_CONFIG.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={cn(
-              "flex-1 flex items-center justify-center gap-2 py-3 rounded-md text-[11px] font-bold uppercase tracking-widest transition-all",
-              activeTab === tab.key
-                ? "bg-white text-pink-600 shadow-sm border border-pink-100"
-                : "text-slate-500 hover:text-slate-700"
-            )}
-          >
-            {tab.icon} {tab.label}
-          </button>
-        ))}
+      {/* Tabs + History */}
+      <div className="flex gap-2">
+        <div className="flex-1 flex gap-2 bg-slate-100 p-1 rounded-lg border border-slate-200">
+          {TAB_CONFIG.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-2 py-3 rounded-md text-[11px] font-bold uppercase tracking-widest transition-all",
+                activeTab === tab.key
+                  ? "bg-white text-pink-600 shadow-sm border border-pink-100"
+                  : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              {tab.icon} {tab.label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => { loadInterviewHistory(); setShowHistoryModal(true); }}
+          className="shrink-0 flex items-center gap-2 px-4 py-3 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-pink-600 transition-all text-[11px] font-bold uppercase tracking-widest bg-white"
+        >
+          <History className="w-4 h-4" /> 历史
+        </button>
       </div>
 
       <AnimatePresence mode="wait">
@@ -311,14 +377,24 @@ export default function InterviewPrep({ userPhone }: InterviewPrepProps) {
                 <BrainCircuit className="w-5 h-5 text-pink-500" />
                 <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">技术面试题库</h3>
               </div>
-              <button
-                onClick={handleGenerateTechnical}
-                disabled={techLoading}
-                className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-2.5 rounded font-bold uppercase tracking-widest text-[10px] flex items-center gap-2 transition-all disabled:opacity-50"
-              >
-                {techLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                生成技术题
-              </button>
+              <div className="flex items-center gap-2">
+                {techQuestions.length > 0 && (
+                  <button
+                    onClick={() => saveCurrentInterview('technical')}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded border border-pink-200 text-pink-600 hover:bg-pink-50 font-bold uppercase tracking-widest text-[10px] transition-all"
+                  >
+                    <Save className="w-3.5 h-3.5" /> 保存
+                  </button>
+                )}
+                <button
+                  onClick={handleGenerateTechnical}
+                  disabled={techLoading}
+                  className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-2.5 rounded font-bold uppercase tracking-widest text-[10px] flex items-center gap-2 transition-all disabled:opacity-50"
+                >
+                  {techLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  生成技术题
+                </button>
+              </div>
             </div>
 
             {techQuestions.length === 0 && !techLoading && (
@@ -407,14 +483,24 @@ export default function InterviewPrep({ userPhone }: InterviewPrepProps) {
                 <Target className="w-5 h-5 text-pink-500" />
                 <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">行为面试题库 (STAR)</h3>
               </div>
-              <button
-                onClick={handleGenerateBehavioral}
-                disabled={behavioralLoading}
-                className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-2.5 rounded font-bold uppercase tracking-widest text-[10px] flex items-center gap-2 transition-all disabled:opacity-50"
-              >
-                {behavioralLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                生成行为题
-              </button>
+              <div className="flex items-center gap-2">
+                {behavioralQuestions.length > 0 && (
+                  <button
+                    onClick={() => saveCurrentInterview('behavioral')}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded border border-pink-200 text-pink-600 hover:bg-pink-50 font-bold uppercase tracking-widest text-[10px] transition-all"
+                  >
+                    <Save className="w-3.5 h-3.5" /> 保存
+                  </button>
+                )}
+                <button
+                  onClick={handleGenerateBehavioral}
+                  disabled={behavioralLoading}
+                  className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-2.5 rounded font-bold uppercase tracking-widest text-[10px] flex items-center gap-2 transition-all disabled:opacity-50"
+                >
+                  {behavioralLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  生成行为题
+                </button>
+              </div>
             </div>
 
             {behavioralQuestions.length === 0 && !behavioralLoading && (
@@ -746,6 +832,90 @@ export default function InterviewPrep({ userPhone }: InterviewPrepProps) {
                     </button>
                   ));
                 })()}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Interview History Modal */}
+      <AnimatePresence>
+        {showHistoryModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+            onClick={(e) => e.target === e.currentTarget && setShowHistoryModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <History className="w-5 h-5 text-pink-500" />
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight">面试历史记录</h3>
+                </div>
+                <button onClick={() => setShowHistoryModal(false)} className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"><X className="w-5 h-5" /></button>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+                {historyLoading ? (
+                  <div className="text-center py-12 text-slate-400">
+                    <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin" />
+                    <p className="text-sm font-medium">加载中...</p>
+                  </div>
+                ) : interviewHistory.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400">
+                    <History className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                    <p className="text-sm font-medium">暂无面试历史</p>
+                    <p className="text-[10px] mt-1">生成面试题后点击"保存"即可记录</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {interviewHistory.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => loadHistoryItem(item.id)}
+                        className="w-full text-left bg-white rounded-lg border border-slate-200 p-4 hover:border-pink-300 hover:shadow-sm hover:bg-pink-50/30 transition-all group"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={cn(
+                                "px-2 py-0.5 rounded text-[10px] font-bold border",
+                                item.type === 'technical'
+                                  ? 'bg-blue-100 text-blue-700 border-blue-200'
+                                  : 'bg-amber-100 text-amber-700 border-amber-200'
+                              )}>
+                                {item.type === 'technical' ? '技术面试' : '行为面试'}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-bold opacity-0 group-hover:opacity-100 transition-opacity">
+                                点击加载
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-1">
+                              <Clock className="w-3 h-3" />
+                              {new Date(item.createdAt).toLocaleDateString()} {new Date(item.createdAt).toLocaleTimeString()}
+                            </p>
+                            <p className="text-[11px] text-slate-500 mt-2 line-clamp-1">
+                              {item.jd?.slice(0, 60) || '无 JD 内容'}...
+                            </p>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeHistoryItem(item.id); }}
+                            className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors shrink-0"
+                            title="删除"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </motion.div>
           </motion.div>

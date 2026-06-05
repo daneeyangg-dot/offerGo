@@ -49,8 +49,13 @@ export default function JobTracker({ userPhone }: JobTrackerProps) {
   const [error, setError] = useState<string | null>(null);
   const [detailApp, setDetailApp] = useState<JobApplication | null>(null);
 
+  const loadApplications = async () => {
+    const apps = await getApplications(userPhone);
+    setApplications(apps);
+  };
+
   useEffect(() => {
-    setApplications(getApplications(userPhone));
+    loadApplications();
   }, [userPhone]);
 
   const filtered = applications.filter((app) => {
@@ -85,30 +90,38 @@ export default function JobTracker({ userPhone }: JobTrackerProps) {
     setShowModal(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.company.trim() || !form.position.trim()) {
       setError('公司名和职位名不能为空');
       return;
     }
-    if (editingApp) {
-      updateApplication(userPhone, editingApp.id, { ...form, updatedAt: Date.now() });
-    } else {
-      saveApplication(userPhone, {
-        ...form,
-        id: crypto.randomUUID(),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
+    try {
+      if (editingApp) {
+        await updateApplication(userPhone, editingApp.id, { ...form, updatedAt: Date.now() });
+      } else {
+        await saveApplication(userPhone, {
+          ...form,
+          id: crypto.randomUUID(),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+      await loadApplications();
+      setShowModal(false);
+    } catch {
+      setError('保存失败，请稍后重试');
     }
-    setApplications(getApplications(userPhone));
-    setShowModal(false);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('确定删除这条投递记录吗？')) return;
-    deleteApplication(userPhone, id);
-    setApplications(getApplications(userPhone));
-    if (detailApp?.id === id) setDetailApp(null);
+    try {
+      await deleteApplication(userPhone, id);
+      await loadApplications();
+      if (detailApp?.id === id) setDetailApp(null);
+    } catch {
+      setError('删除失败');
+    }
   };
 
   const statusInfo = (s: string) => STATUS_OPTIONS.find((o) => o.value === s) || STATUS_OPTIONS[0];

@@ -1,4 +1,52 @@
-const MODEL = "qwen-plus";
+interface ApiConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+const DEFAULT_CONFIG: ApiConfig = {
+  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  apiKey: "",
+  model: "qwen-plus",
+};
+
+export function getApiConfig(): ApiConfig {
+  try {
+    const raw = localStorage.getItem("iwaj_api_config");
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<ApiConfig>;
+      return {
+        baseUrl: parsed.baseUrl?.trim() || DEFAULT_CONFIG.baseUrl,
+        apiKey: parsed.apiKey?.trim() || DEFAULT_CONFIG.apiKey,
+        model: parsed.model?.trim() || DEFAULT_CONFIG.model,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  // Legacy migration: read old api key
+  const legacyKey = localStorage.getItem("iwaj_api_key");
+  if (legacyKey) {
+    return { ...DEFAULT_CONFIG, apiKey: legacyKey };
+  }
+  return { ...DEFAULT_CONFIG };
+}
+
+export function saveApiConfig(config: Partial<ApiConfig>): void {
+  const current = getApiConfig();
+  const next: ApiConfig = {
+    baseUrl: config.baseUrl?.trim() || current.baseUrl,
+    apiKey: config.apiKey?.trim() || current.apiKey,
+    model: config.model?.trim() || current.model,
+  };
+  localStorage.setItem("iwaj_api_config", JSON.stringify(next));
+  // Also keep legacy key for backward compat during transition
+  if (next.apiKey) {
+    localStorage.setItem("iwaj_api_key", next.apiKey);
+  } else {
+    localStorage.removeItem("iwaj_api_key");
+  }
+}
 
 export interface AnalysisResult {
   roleType: string;
@@ -19,8 +67,10 @@ async function chatCompletion(
   stream = false,
   jsonMode = false
 ): Promise<Response> {
+  const config = getApiConfig();
   const body: Record<string, unknown> = {
-    model: MODEL,
+    model: config.model,
+    baseUrl: config.baseUrl,
     messages,
     stream,
   };
@@ -28,12 +78,11 @@ async function chatCompletion(
     body.response_format = { type: "json_object" };
   }
 
-  const apiKey = typeof window !== 'undefined' ? localStorage.getItem('iwaj_api_key') : null;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (apiKey) {
-    headers["X-API-Key"] = apiKey;
+  if (config.apiKey) {
+    headers["X-API-Key"] = config.apiKey;
   }
 
   const res = await fetch(`/api/chat/completions`, {
