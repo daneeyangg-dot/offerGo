@@ -2,23 +2,22 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
-import {
-  db,
-  userStmts,
-  jdStmts,
-  resumeStmts,
-  appStmts,
-  draftStmts,
-  analysisHistoryStmts,
-  interviewHistoryStmts,
+import { initDb, getRow, getRows, runQuery } from './db.js';
+import type {
+  UserRow,
+  JDRow,
+  ResumeRow,
+  ApplicationRow,
+  DraftRow,
+  AnalysisHistoryRow,
+  InterviewHistoryRow,
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 const JWT_SECRET = process.env.JWT_SECRET || 'iwaj-dev-secret-change-in-production';
-const BASE_URL = 'https://dashscope.aliyun.com/compatible-mode/v1';
+const BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
@@ -43,6 +42,15 @@ app.use((req, res, next) => {
   }
 });
 
+// Initialize DB on first request in serverless environments
+let dbInitialized = false;
+async function ensureDb() {
+  if (!dbInitialized) {
+    await initDb();
+    dbInitialized = true;
+  }
+}
+
 // Auth middleware
 function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
@@ -62,19 +70,23 @@ function authMiddleware(req: express.Request, res: express.Response, next: expre
 
 // ========== Auth Routes ==========
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
+  await ensureDb();
   const { phone, salt, passwordHash } = req.body;
   if (!phone || !salt || !passwordHash) {
     res.status(400).json({ error: '缺少必要字段' });
     return;
   }
   try {
-    const existing = userStmts.findByPhone.get(phone);
+    const existing = await getRow<UserRow>('SELECT * FROM users WHERE phone = ?', [phone]);
     if (existing) {
       res.status(409).json({ error: '该手机号已注册' });
       return;
     }
-    userStmts.insert.run(phone, salt, passwordHash, Date.now());
+    await runQuery(
+      'INSERT INTO users (phone, salt, password_hash, created_at) VALUES (?, ?, ?, ?)',
+      [phone, salt, passwordHash, Date.now()]
+    );
     const token = jwt.sign({ phone }, JWT_SECRET, { expiresIn: '30d' });
     res.json({ token, user: { phone, createdAt: Date.now() } });
   } catch (error) {
@@ -83,14 +95,15 @@ app.post('/api/auth/register', (req, res) => {
   }
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
+  await ensureDb();
   const { phone, passwordHash } = req.body;
   if (!phone || !passwordHash) {
     res.status(400).json({ error: '缺少必要字段' });
     return;
   }
   try {
-    const user = userStmts.findByPhone.get(phone);
+    const user = await getRow<UserRow>('SELECT * FROM users WHERE phone = ?', [phone]);
     if (!user || user.password_hash !== passwordHash) {
       res.status(401).json({ error: '手机号或密码错误' });
       return;
@@ -103,56 +116,63 @@ app.post('/api/auth/login', (req, res) => {
   }
 });
 
-app.post('/api/auth/migrate', authMiddleware, (req, res) => {
+app.post('/api/auth/migrate', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { jds, resumes, applications, drafts } = req.body;
 
   try {
-    db.transaction(() => {
-      // Migrate JDs
-      if (Array.isArray(jds)) {
-        for (const jd of jds) {
-          try {
-            jdStmts.insert.run(jd.id, userPhone, jd.company, jd.position || '', jd.content, jd.createdAt || Date.now());
-          } catch {
-            // ignore duplicate
-          }
+    if (Array.isArray(jds)) {
+      for (const jd of jds) {
+        try {
+          await runQuery(
+            'INSERT INTO jds (id, user_phone, company, position, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [jd.id, userPhone, jd.company, jd.position || '', jd.content, jd.createdAt || Date.now()]
+          );
+        } catch {
+          // ignore duplicate
         }
       }
-      // Migrate resumes
-      if (Array.isArray(resumes)) {
-        for (const r of resumes) {
-          try {
-            resumeStmts.insert.run(r.id, userPhone, r.name, r.content, r.updatedAt || Date.now());
-          } catch {
-            // ignore duplicate
-          }
+    }
+    if (Array.isArray(resumes)) {
+      for (const r of resumes) {
+        try {
+          await runQuery(
+            'INSERT INTO resumes (id, user_phone, name, content, updated_at) VALUES (?, ?, ?, ?, ?)',
+            [r.id, userPhone, r.name, r.content, r.updatedAt || Date.now()]
+          );
+        } catch {
+          // ignore duplicate
         }
       }
-      // Migrate applications
-      if (Array.isArray(applications)) {
-        for (const a of applications) {
-          try {
-            appStmts.insert.run(
+    }
+    if (Array.isArray(applications)) {
+      for (const a of applications) {
+        try {
+          await runQuery(
+            'INSERT INTO applications (id, user_phone, company, position, jd, tailored_resume, cover_letter, status, priority, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [
               a.id, userPhone, a.company, a.position,
               a.jd || '', a.tailoredResume || '', a.coverLetter || '',
               a.status, a.priority, a.notes || '',
-              a.createdAt || Date.now(), a.updatedAt || Date.now()
-            );
-          } catch {
-            // ignore duplicate
-          }
+              a.createdAt || Date.now(), a.updatedAt || Date.now(),
+            ]
+          );
+        } catch {
+          // ignore duplicate
         }
       }
-      // Migrate drafts
-      if (typeof drafts === 'object') {
-        for (const [type, data] of Object.entries(drafts)) {
-          if (data) {
-            draftStmts.upsert.run(userPhone, type, JSON.stringify(data), Date.now());
-          }
+    }
+    if (typeof drafts === 'object') {
+      for (const [type, data] of Object.entries(drafts)) {
+        if (data) {
+          await runQuery(
+            'INSERT INTO drafts (user_phone, type, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_phone, type) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
+            [userPhone, type, JSON.stringify(data), Date.now()]
+          );
         }
       }
-    })();
+    }
     res.json({ success: true });
   } catch (error) {
     console.error('Migrate error:', error);
@@ -162,11 +182,12 @@ app.post('/api/auth/migrate', authMiddleware, (req, res) => {
 
 // ========== JD Routes ==========
 
-app.get('/api/jds', authMiddleware, (req, res) => {
+app.get('/api/jds', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   try {
-    const rows = jdStmts.findByUser.all(userPhone);
-    const jds = rows.map(r => ({
+    const rows = await getRows<JDRow>('SELECT * FROM jds WHERE user_phone = ? ORDER BY created_at DESC', [userPhone]);
+    const jds = rows.map((r) => ({
       id: r.id,
       company: r.company,
       position: r.position,
@@ -180,11 +201,15 @@ app.get('/api/jds', authMiddleware, (req, res) => {
   }
 });
 
-app.post('/api/jds', authMiddleware, (req, res) => {
+app.post('/api/jds', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id, company, position, content, createdAt } = req.body;
   try {
-    jdStmts.insert.run(id, userPhone, company, position || '', content, createdAt || Date.now());
+    await runQuery(
+      'INSERT INTO jds (id, user_phone, company, position, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, userPhone, company, position || '', content, createdAt || Date.now()]
+    );
     res.json({ success: true });
   } catch (error) {
     console.error('Create JD error:', error);
@@ -192,12 +217,16 @@ app.post('/api/jds', authMiddleware, (req, res) => {
   }
 });
 
-app.put('/api/jds/:id', authMiddleware, (req, res) => {
+app.put('/api/jds/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   const { company, position, content } = req.body;
   try {
-    const result = jdStmts.update.run(company, position || '', content, id, userPhone);
+    const result = await runQuery(
+      'UPDATE jds SET company = ?, position = ?, content = ? WHERE id = ? AND user_phone = ?',
+      [company, position || '', content, id, userPhone]
+    );
     if (result.changes === 0) {
       res.status(404).json({ error: 'JD 不存在' });
       return;
@@ -209,11 +238,12 @@ app.put('/api/jds/:id', authMiddleware, (req, res) => {
   }
 });
 
-app.delete('/api/jds/:id', authMiddleware, (req, res) => {
+app.delete('/api/jds/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   try {
-    jdStmts.delete.run(id, userPhone);
+    await runQuery('DELETE FROM jds WHERE id = ? AND user_phone = ?', [id, userPhone]);
     res.json({ success: true });
   } catch (error) {
     console.error('Delete JD error:', error);
@@ -223,11 +253,12 @@ app.delete('/api/jds/:id', authMiddleware, (req, res) => {
 
 // ========== Resume Routes ==========
 
-app.get('/api/resumes', authMiddleware, (req, res) => {
+app.get('/api/resumes', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   try {
-    const rows = resumeStmts.findByUser.all(userPhone);
-    const resumes = rows.map(r => ({
+    const rows = await getRows<ResumeRow>('SELECT * FROM resumes WHERE user_phone = ? ORDER BY updated_at DESC', [userPhone]);
+    const resumes = rows.map((r) => ({
       id: r.id,
       name: r.name,
       content: r.content,
@@ -240,11 +271,15 @@ app.get('/api/resumes', authMiddleware, (req, res) => {
   }
 });
 
-app.post('/api/resumes', authMiddleware, (req, res) => {
+app.post('/api/resumes', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id, name, content, updatedAt } = req.body;
   try {
-    resumeStmts.insert.run(id, userPhone, name, content, updatedAt || Date.now());
+    await runQuery(
+      'INSERT INTO resumes (id, user_phone, name, content, updated_at) VALUES (?, ?, ?, ?, ?)',
+      [id, userPhone, name, content, updatedAt || Date.now()]
+    );
     res.json({ success: true });
   } catch (error) {
     console.error('Create resume error:', error);
@@ -252,12 +287,16 @@ app.post('/api/resumes', authMiddleware, (req, res) => {
   }
 });
 
-app.put('/api/resumes/:id', authMiddleware, (req, res) => {
+app.put('/api/resumes/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   const { name, content } = req.body;
   try {
-    const result = resumeStmts.update.run(name, content, Date.now(), id, userPhone);
+    const result = await runQuery(
+      'UPDATE resumes SET name = ?, content = ?, updated_at = ? WHERE id = ? AND user_phone = ?',
+      [name, content, Date.now(), id, userPhone]
+    );
     if (result.changes === 0) {
       res.status(404).json({ error: '简历不存在' });
       return;
@@ -269,11 +308,12 @@ app.put('/api/resumes/:id', authMiddleware, (req, res) => {
   }
 });
 
-app.delete('/api/resumes/:id', authMiddleware, (req, res) => {
+app.delete('/api/resumes/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   try {
-    resumeStmts.delete.run(id, userPhone);
+    await runQuery('DELETE FROM resumes WHERE id = ? AND user_phone = ?', [id, userPhone]);
     res.json({ success: true });
   } catch (error) {
     console.error('Delete resume error:', error);
@@ -283,11 +323,15 @@ app.delete('/api/resumes/:id', authMiddleware, (req, res) => {
 
 // ========== Application Routes ==========
 
-app.get('/api/applications', authMiddleware, (req, res) => {
+app.get('/api/applications', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   try {
-    const rows = appStmts.findByUser.all(userPhone);
-    const applications = rows.map(r => ({
+    const rows = await getRows<ApplicationRow>(
+      'SELECT * FROM applications WHERE user_phone = ? ORDER BY updated_at DESC',
+      [userPhone]
+    );
+    const applications = rows.map((r) => ({
       id: r.id,
       company: r.company,
       position: r.position,
@@ -307,15 +351,19 @@ app.get('/api/applications', authMiddleware, (req, res) => {
   }
 });
 
-app.post('/api/applications', authMiddleware, (req, res) => {
+app.post('/api/applications', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id, company, position, jd, tailoredResume, coverLetter, status, priority, notes, createdAt, updatedAt } = req.body;
   try {
-    appStmts.insert.run(
-      id, userPhone, company, position,
-      jd || '', tailoredResume || '', coverLetter || '',
-      status, priority, notes || '',
-      createdAt || Date.now(), updatedAt || Date.now()
+    await runQuery(
+      'INSERT INTO applications (id, user_phone, company, position, jd, tailored_resume, cover_letter, status, priority, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        id, userPhone, company, position,
+        jd || '', tailoredResume || '', coverLetter || '',
+        status, priority, notes || '',
+        createdAt || Date.now(), updatedAt || Date.now(),
+      ]
     );
     res.json({ success: true });
   } catch (error) {
@@ -324,14 +372,18 @@ app.post('/api/applications', authMiddleware, (req, res) => {
   }
 });
 
-app.put('/api/applications/:id', authMiddleware, (req, res) => {
+app.put('/api/applications/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   const { company, position, jd, tailoredResume, coverLetter, status, priority, notes } = req.body;
   try {
-    const result = appStmts.update.run(
-      company, position, jd || '', tailoredResume || '', coverLetter || '',
-      status, priority, notes || '', Date.now(), id, userPhone
+    const result = await runQuery(
+      'UPDATE applications SET company = ?, position = ?, jd = ?, tailored_resume = ?, cover_letter = ?, status = ?, priority = ?, notes = ?, updated_at = ? WHERE id = ? AND user_phone = ?',
+      [
+        company, position, jd || '', tailoredResume || '', coverLetter || '',
+        status, priority, notes || '', Date.now(), id, userPhone,
+      ]
     );
     if (result.changes === 0) {
       res.status(404).json({ error: '投递记录不存在' });
@@ -344,11 +396,12 @@ app.put('/api/applications/:id', authMiddleware, (req, res) => {
   }
 });
 
-app.delete('/api/applications/:id', authMiddleware, (req, res) => {
+app.delete('/api/applications/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   try {
-    appStmts.delete.run(id, userPhone);
+    await runQuery('DELETE FROM applications WHERE id = ? AND user_phone = ?', [id, userPhone]);
     res.json({ success: true });
   } catch (error) {
     console.error('Delete application error:', error);
@@ -358,11 +411,12 @@ app.delete('/api/applications/:id', authMiddleware, (req, res) => {
 
 // ========== Draft Routes ==========
 
-app.get('/api/drafts/:type', authMiddleware, (req, res) => {
+app.get('/api/drafts/:type', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { type } = req.params;
   try {
-    const row = draftStmts.findByUserAndType.get(userPhone, type);
+    const row = await getRow<DraftRow>('SELECT * FROM drafts WHERE user_phone = ? AND type = ?', [userPhone, type]);
     if (!row) {
       res.json(null);
       return;
@@ -374,12 +428,16 @@ app.get('/api/drafts/:type', authMiddleware, (req, res) => {
   }
 });
 
-app.put('/api/drafts/:type', authMiddleware, (req, res) => {
+app.put('/api/drafts/:type', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { type } = req.params;
   const { data } = req.body;
   try {
-    draftStmts.upsert.run(userPhone, type, JSON.stringify(data), Date.now());
+    await runQuery(
+      'INSERT INTO drafts (user_phone, type, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_phone, type) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at',
+      [userPhone, type, JSON.stringify(data), Date.now()]
+    );
     res.json({ success: true });
   } catch (error) {
     console.error('Save draft error:', error);
@@ -389,11 +447,15 @@ app.put('/api/drafts/:type', authMiddleware, (req, res) => {
 
 // ========== Analysis History Routes ==========
 
-app.get('/api/analysis-history', authMiddleware, (req, res) => {
+app.get('/api/analysis-history', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   try {
-    const rows = analysisHistoryStmts.findByUser.all(userPhone);
-    const items = rows.map(r => ({
+    const rows = await getRows<AnalysisHistoryRow>(
+      'SELECT * FROM analysis_history WHERE user_phone = ? ORDER BY created_at DESC',
+      [userPhone]
+    );
+    const items = rows.map((r) => ({
       id: r.id,
       company: r.company,
       position: r.position,
@@ -417,11 +479,12 @@ app.get('/api/analysis-history', authMiddleware, (req, res) => {
   }
 });
 
-app.get('/api/analysis-history/:id', authMiddleware, (req, res) => {
+app.get('/api/analysis-history/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   try {
-    const row = analysisHistoryStmts.findById.get(id, userPhone);
+    const row = await getRow<AnalysisHistoryRow>('SELECT * FROM analysis_history WHERE id = ? AND user_phone = ?', [id, userPhone]);
     if (!row) {
       res.status(404).json({ error: '记录不存在' });
       return;
@@ -449,7 +512,8 @@ app.get('/api/analysis-history/:id', authMiddleware, (req, res) => {
   }
 });
 
-app.post('/api/analysis-history', authMiddleware, (req, res) => {
+app.post('/api/analysis-history', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const {
     id, company, position, jd, resume, extraDocs,
@@ -457,14 +521,17 @@ app.post('/api/analysis-history', authMiddleware, (req, res) => {
     keyReasons, recommendation, optimizedResume, coverLetter,
   } = req.body;
   try {
-    analysisHistoryStmts.insert.run(
-      id || crypto.randomUUID(), userPhone,
-      company || '', position || '',
-      jd || '', resume || '', extraDocs || '',
-      fitRating || '', roleType || '', seniorityLevel || '', score || 0,
-      JSON.stringify(keyReasons || []), recommendation || '',
-      optimizedResume || '', coverLetter || '',
-      Date.now()
+    await runQuery(
+      'INSERT INTO analysis_history (id, user_phone, company, position, jd, resume, extra_docs, fit_rating, role_type, seniority_level, score, key_reasons, recommendation, optimized_resume, cover_letter, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        id || crypto.randomUUID(), userPhone,
+        company || '', position || '',
+        jd || '', resume || '', extraDocs || '',
+        fitRating || '', roleType || '', seniorityLevel || '', score || 0,
+        JSON.stringify(keyReasons || []), recommendation || '',
+        optimizedResume || '', coverLetter || '',
+        Date.now(),
+      ]
     );
     res.json({ success: true });
   } catch (error) {
@@ -473,11 +540,12 @@ app.post('/api/analysis-history', authMiddleware, (req, res) => {
   }
 });
 
-app.delete('/api/analysis-history/:id', authMiddleware, (req, res) => {
+app.delete('/api/analysis-history/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   try {
-    analysisHistoryStmts.delete.run(id, userPhone);
+    await runQuery('DELETE FROM analysis_history WHERE id = ? AND user_phone = ?', [id, userPhone]);
     res.json({ success: true });
   } catch (error) {
     console.error('Delete analysis history error:', error);
@@ -487,11 +555,15 @@ app.delete('/api/analysis-history/:id', authMiddleware, (req, res) => {
 
 // ========== Interview History Routes ==========
 
-app.get('/api/interview-history', authMiddleware, (req, res) => {
+app.get('/api/interview-history', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   try {
-    const rows = interviewHistoryStmts.findByUser.all(userPhone);
-    const items = rows.map(r => ({
+    const rows = await getRows<InterviewHistoryRow>(
+      'SELECT * FROM interview_history WHERE user_phone = ? ORDER BY created_at DESC',
+      [userPhone]
+    );
+    const items = rows.map((r) => ({
       id: r.id,
       type: r.type,
       jd: r.jd,
@@ -506,11 +578,12 @@ app.get('/api/interview-history', authMiddleware, (req, res) => {
   }
 });
 
-app.get('/api/interview-history/:id', authMiddleware, (req, res) => {
+app.get('/api/interview-history/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   try {
-    const row = interviewHistoryStmts.findById.get(id, userPhone);
+    const row = await getRow<InterviewHistoryRow>('SELECT * FROM interview_history WHERE id = ? AND user_phone = ?', [id, userPhone]);
     if (!row) {
       res.status(404).json({ error: '记录不存在' });
       return;
@@ -529,16 +602,20 @@ app.get('/api/interview-history/:id', authMiddleware, (req, res) => {
   }
 });
 
-app.post('/api/interview-history', authMiddleware, (req, res) => {
+app.post('/api/interview-history', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id, type, jd, resume, questions } = req.body;
   try {
-    interviewHistoryStmts.insert.run(
-      id || crypto.randomUUID(), userPhone,
-      type || 'technical',
-      jd || '', resume || '',
-      JSON.stringify(questions || []),
-      Date.now()
+    await runQuery(
+      'INSERT INTO interview_history (id, user_phone, type, jd, resume, questions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [
+        id || crypto.randomUUID(), userPhone,
+        type || 'technical',
+        jd || '', resume || '',
+        JSON.stringify(questions || []),
+        Date.now(),
+      ]
     );
     res.json({ success: true });
   } catch (error) {
@@ -547,11 +624,12 @@ app.post('/api/interview-history', authMiddleware, (req, res) => {
   }
 });
 
-app.delete('/api/interview-history/:id', authMiddleware, (req, res) => {
+app.delete('/api/interview-history/:id', authMiddleware, async (req, res) => {
+  await ensureDb();
   const userPhone = (req as any).userPhone;
   const { id } = req.params;
   try {
-    interviewHistoryStmts.delete.run(id, userPhone);
+    await runQuery('DELETE FROM interview_history WHERE id = ? AND user_phone = ?', [id, userPhone]);
     res.json({ success: true });
   } catch (error) {
     console.error('Delete interview history error:', error);
@@ -572,13 +650,11 @@ app.post('/api/chat/completions', async (req, res) => {
     return;
   }
 
-  // Use user-provided base URL, fallback to default
   const targetBaseUrl = baseUrl?.trim() || BASE_URL;
   const targetUrl = targetBaseUrl.endsWith('/')
     ? `${targetBaseUrl}chat/completions`
     : `${targetBaseUrl}/chat/completions`;
 
-  // Build upstream body without our custom fields
   const upstreamBody = { ...req.body };
   delete (upstreamBody as Record<string, unknown>).baseUrl;
 
@@ -641,7 +717,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Serve static files from dist
+// Serve static files from dist (only for local production preview, Vercel handles this separately)
 const distPath = path.resolve(__dirname, '../dist');
 app.use(express.static(distPath));
 
@@ -650,7 +726,13 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Mode: BYOK — clients must supply X-API-Key header.`);
-});
+// Local development server
+if (process.env.NODE_ENV !== 'production' || import.meta.url === `file://${process.argv[1]}`) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Mode: BYOK — clients must supply X-API-Key header.`);
+  });
+}
+
+export default app;
