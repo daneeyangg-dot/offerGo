@@ -5,20 +5,27 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let _db: Client | null = null;
+let _dbUrl: string | null = null;
 
 function getClient(): Client {
+  const isVercel = process.env.VERCEL === '1';
+  const hasTurso = process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN;
+  const defaultDbPath = isVercel && !hasTurso
+    ? 'file::memory:'
+    : `file:${path.resolve(__dirname, '../data/app.db')}`;
+  const databaseUrl = hasTurso ? process.env.TURSO_DATABASE_URL! : defaultDbPath;
+
+  if (_db && _dbUrl !== databaseUrl) {
+    _db = null;
+  }
+
   if (!_db) {
-    const isVercel = process.env.VERCEL === '1';
-    const hasTurso = process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN;
-    const defaultDbPath = isVercel && !hasTurso
-      ? 'file::memory:'
-      : `file:${path.resolve(__dirname, '../data/app.db')}`;
-    const databaseUrl = hasTurso ? process.env.TURSO_DATABASE_URL : defaultDbPath;
     const authToken = process.env.TURSO_AUTH_TOKEN;
     _db = createClient({
       url: databaseUrl,
       ...(authToken ? { authToken } : {}),
     });
+    _dbUrl = databaseUrl;
   }
   return _db;
 }
