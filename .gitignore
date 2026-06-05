@@ -15,3 +15,6 @@ test.html
 .claude/settings.local.json
 .vscode/
 .idea/
+
+# SQLite database files (user data, should not be committed)
+data/
