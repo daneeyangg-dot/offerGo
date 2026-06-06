@@ -728,6 +728,16 @@ app.post('/api/chat/completions', async (req, res) => {
   const upstreamBody = { ...req.body };
   delete (upstreamBody as Record<string, unknown>).baseUrl;
 
+  // 逐跳头（hop-by-hop）不能转发，否则在 Vercel serverless 环境下
+  // 会导致 ERR_CONNECTION_CLOSED（transfer-encoding: chunked 是主要元凶）
+  const HOP_BY_HOP = new Set([
+    'transfer-encoding', 'connection', 'keep-alive',
+    'upgrade', 'proxy-authenticate', 'proxy-authorization',
+    'te', 'trailers', 'content-encoding',
+  ]);
+
+  const isStreaming = upstreamBody.stream === true;
+
   try {
     const response = await fetch(targetUrl, {
       method: 'POST',
@@ -747,38 +757,41 @@ app.post('/api/chat/completions', async (req, res) => {
       return;
     }
 
-    res.status(response.status);
-    response.headers.forEach((value, key) => {
-      if (key.toLowerCase() !== 'content-encoding') {
-        try {
-          res.setHeader(key, value);
-        } catch {
-          // ignore headers that can't be set
-        }
-      }
-    });
+    if (isStreaming && response.body) {
+      // 流式响应：设置 SSE 头后逐块写入
+      res.status(response.status);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-Accel-Buffering', 'no');
 
-    if (response.body) {
       const reader = response.body.getReader();
-      const pump = async () => {
+      try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           res.write(Buffer.from(value));
         }
-        res.end();
-      };
-      await pump();
+      } finally {
+        reader.releaseLock();
+      }
+      res.end();
     } else {
-      const text = await response.text();
-      res.send(text);
+      // 非流式响应：一次性读取完整数据，设置正确的 Content-Length，
+      // 避免 transfer-encoding: chunked 被转发到 Vercel 导致连接异常
+      const buffer = await response.arrayBuffer();
+      res.status(response.status);
+      res.setHeader('Content-Type', response.headers.get('content-type') || 'application/json');
+      res.setHeader('Content-Length', buffer.byteLength);
+      res.end(Buffer.from(buffer));
     }
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     const errStack = error instanceof Error ? error.stack : '';
     console.error('Proxy error targeting', targetUrl, ':', errMsg);
     console.error('Proxy error stack:', errStack);
-    res.status(502).json({ error: 'Proxy request failed', detail: errMsg, targetUrl });
+    if (!res.headersSent) {
+      res.status(502).json({ error: 'Proxy request failed', detail: errMsg, targetUrl });
+    }
   }
 });
 
