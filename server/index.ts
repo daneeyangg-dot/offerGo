@@ -91,7 +91,7 @@ app.post('/api/auth/register', async (req, res) => {
     res.json({ token, user: { phone, createdAt: Date.now() } });
   } catch (error) {
     console.error('Register error:', error);
-    res.status(500).json({ error: '注册失败' });
+    res.status(500).json({ error: '注册失败: ' + (error instanceof Error ? error.message : String(error)) });
   }
 });
 
@@ -112,7 +112,7 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({ token, user: { phone, createdAt: user.created_at } });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ error: '登录失败' });
+    res.status(500).json({ error: '登录失败: ' + (error instanceof Error ? error.message : String(error)) });
   }
 });
 
@@ -132,7 +132,7 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Change password error:', error);
-    res.status(500).json({ error: '修改密码失败' });
+    res.status(500).json({ error: '修改密码失败: ' + (error instanceof Error ? error.message : String(error)) });
   }
 });
 
