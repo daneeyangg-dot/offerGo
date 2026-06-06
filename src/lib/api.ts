@@ -65,6 +65,17 @@ export function migrateData(data: {
   });
 }
 
+export function updatePassword(salt: string, passwordHash: string) {
+  return apiFetch('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ salt, passwordHash }),
+  });
+}
+
+export function getSalt(phone: string) {
+  return apiFetch(`/auth/salt?phone=${encodeURIComponent(phone)}`) as Promise<{ salt: string }>;
+}
+
 // JDs
 export function getJDs() {
   return apiFetch('/jds') as Promise<Array<{ id: string; company: string; position: string; content: string; createdAt: number }>>;

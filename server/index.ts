@@ -116,6 +116,47 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
+  await ensureDb();
+  const userPhone = (req as any).userPhone;
+  const { salt, passwordHash } = req.body;
+  if (!salt || !passwordHash) {
+    res.status(400).json({ error: '缺少必要字段' });
+    return;
+  }
+  try {
+    await runQuery(
+      'UPDATE users SET salt = ?, password_hash = ? WHERE phone = ?',
+      [salt, passwordHash, userPhone]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: '修改密码失败' });
+  }
+});
+
+app.get('/api/auth/salt', async (req, res) => {
+  await ensureDb();
+  const { phone } = req.query;
+  if (!phone) {
+    res.status(400).json({ error: '缺少手机号' });
+    return;
+  }
+  try {
+    const user = await getRow<UserRow>('SELECT salt FROM users WHERE phone = ?', [phone as string]);
+    if (!user) {
+      res.status(404).json({ error: '用户不存在' });
+      return;
+    }
+    res.json({ salt: user.salt });
+  } catch (error) {
+    console.error('Get salt error:', error);
+    res.status(500).json({ error: '获取 salt 失败' });
+  }
+});
+
+
 app.post('/api/auth/migrate', authMiddleware, async (req, res) => {
   await ensureDb();
   const userPhone = (req as any).userPhone;

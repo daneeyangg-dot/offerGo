@@ -1,5 +1,5 @@
 import type { User } from '../types';
-import { registerUser, loginUser, migrateData } from './api';
+import { registerUser, loginUser, migrateData, updatePassword, getSalt } from './api';
 
 const SESSION_KEY = 'iwaj_session';
 const TOKEN_KEY = 'iwaj_token';
@@ -65,11 +65,15 @@ export async function validateUser(phone: string, password: string): Promise<Use
   }
 
   if (!salt) {
-    // Cannot hash without salt — user may not exist locally
-    // Try server login with a dummy hash (will fail if user doesn't exist)
-    // Actually, we need the salt. If not in localStorage, we can't login.
-    // This is a limitation of the migration. The user must re-register if salt is lost.
-    // But wait — for existing users, the salt IS in localStorage. For new users, they'll register through the API.
+    try {
+      const res = await getSalt(phone);
+      salt = res.salt;
+    } catch {
+      return null;
+    }
+  }
+
+  if (!salt) {
     return null;
   }
 
@@ -82,6 +86,31 @@ export async function validateUser(phone: string, password: string): Promise<Use
     return res.user;
   } catch {
     return null;
+  }
+}
+
+export async function changePassword(password: string): Promise<void> {
+  const session = getSession();
+  if (!session) {
+    throw new Error('用户未登录');
+  }
+  const salt = generateSalt();
+  const passwordHash = await hashPassword(password, salt);
+  await updatePassword(salt, passwordHash);
+
+  // If user has old cache, we can update it
+  const usersRaw = localStorage.getItem('iwaj_users');
+  if (usersRaw) {
+    try {
+      const users = JSON.parse(usersRaw) as Array<{ phone: string; salt?: string; password?: string; passwordHash?: string }>;
+      const index = users.findIndex((u) => u.phone === session.phone);
+      if (index !== -1) {
+        users[index].salt = salt;
+        localStorage.setItem('iwaj_users', JSON.stringify(users));
+      }
+    } catch {
+      // ignore
+    }
   }
 }
 

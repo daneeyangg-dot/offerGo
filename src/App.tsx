@@ -30,6 +30,7 @@ import {
   History,
   Trash2,
   Clock,
+  Lock,
 } from 'lucide-react';
 import {
   analyzeJobFit, tailorResumeStream, generateCoverLetterStream, type AnalysisResult,
@@ -47,6 +48,7 @@ import {
   setSession,
   clearSession,
   migrateLegacyData,
+  changePassword,
 } from './lib/auth';
 import {
   getJDs,
@@ -126,6 +128,46 @@ export default function App() {
   // API config (multi-provider)
   const [apiConfig, setApiConfig] = useState(() => getApiConfig());
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+
+  // Change Password state
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
+  const [changePasswordSuccess, setChangePasswordSuccess] = useState<string | null>(null);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  const handleChangePasswordSubmit = async () => {
+    if (!newPassword.trim()) {
+      setChangePasswordError('新密码不能为空');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setChangePasswordError('密码长度不能小于6位');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setChangePasswordError('两次输入的密码不一致');
+      return;
+    }
+    setChangePasswordError(null);
+    setChangePasswordSuccess(null);
+    setIsChangingPassword(true);
+    try {
+      await changePassword(newPassword);
+      setChangePasswordSuccess('密码修改成功！');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setTimeout(() => {
+        setShowChangePasswordModal(false);
+        setChangePasswordSuccess(null);
+      }, 1500);
+    } catch (err) {
+      setChangePasswordError(err instanceof Error ? err.message : '修改密码失败');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
 
   // First-time onboarding: prompt for API config when a logged-in user has none.
   useEffect(() => {
@@ -489,6 +531,13 @@ export default function App() {
               title="API 设置"
             >
               <Settings className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowChangePasswordModal(true)}
+              className="p-2 text-slate-400 hover:text-pink-400 transition-colors rounded-md hover:bg-slate-800"
+              title="修改密码"
+            >
+              <Lock className="w-4 h-4" />
             </button>
             <button
               onClick={handleLogout}
@@ -1457,6 +1506,108 @@ export default function App() {
                     className="bg-pink-600 hover:bg-pink-700 text-white px-5 py-2.5 rounded font-bold uppercase tracking-widest text-[10px] transition-all"
                   >
                     保存
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Change Password Modal */}
+      <AnimatePresence>
+        {showChangePasswordModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+            onClick={(e) => e.target === e.currentTarget && setShowChangePasswordModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-xl shadow-2xl w-full max-w-md"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-pink-500" /> 修改密码
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowChangePasswordModal(false);
+                    setNewPassword('');
+                    setConfirmNewPassword('');
+                    setChangePasswordError(null);
+                    setChangePasswordSuccess(null);
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                {changePasswordError && (
+                  <div className="p-3 rounded-lg bg-rose-50 text-rose-700 text-xs font-bold flex items-center gap-2 border border-rose-100">
+                    <AlertCircle className="w-4 h-4" /> {changePasswordError}
+                  </div>
+                )}
+                {changePasswordSuccess && (
+                  <div className="p-3 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center gap-2 border border-emerald-100">
+                    <Check className="w-4 h-4" /> {changePasswordSuccess}
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] block">
+                    新密码
+                  </label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="请输入新密码"
+                    className="w-full bg-white border border-slate-200 rounded p-3 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-all"
+                    onKeyDown={(e) => e.key === 'Enter' && handleChangePasswordSubmit()}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] block">
+                    确认新密码
+                  </label>
+                  <input
+                    type="password"
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    placeholder="请再次输入新密码"
+                    className="w-full bg-white border border-slate-200 rounded p-3 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-all"
+                    onKeyDown={(e) => e.key === 'Enter' && handleChangePasswordSubmit()}
+                  />
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      setShowChangePasswordModal(false);
+                      setNewPassword('');
+                      setConfirmNewPassword('');
+                      setChangePasswordError(null);
+                      setChangePasswordSuccess(null);
+                    }}
+                    className="px-5 py-2.5 border border-slate-200 text-slate-600 rounded font-bold uppercase tracking-widest text-[10px] hover:bg-slate-50 transition-all"
+                    disabled={isChangingPassword}
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleChangePasswordSubmit}
+                    className="bg-pink-600 hover:bg-pink-700 text-white px-5 py-2.5 rounded font-bold uppercase tracking-widest text-[10px] transition-all flex items-center gap-2 disabled:opacity-50"
+                    disabled={isChangingPassword}
+                  >
+                    {isChangingPassword ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      '确认修改'
+                    )}
                   </button>
                 </div>
               </div>
