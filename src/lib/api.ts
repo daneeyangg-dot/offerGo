@@ -76,6 +76,14 @@ export function getSalt(phone: string) {
   return apiFetch(`/auth/salt?phone=${encodeURIComponent(phone)}`) as Promise<{ salt: string }>;
 }
 
+export function resetPassword(phone: string, securityKey: string, salt: string, passwordHash: string) {
+  return apiFetch('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ phone, securityKey, salt, passwordHash }),
+  });
+}
+
+
 // JDs
 export function getJDs() {
   return apiFetch('/jds') as Promise<Array<{ id: string; company: string; position: string; content: string; createdAt: number }>>;

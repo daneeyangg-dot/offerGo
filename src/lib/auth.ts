@@ -1,5 +1,5 @@
 import type { User } from '../types';
-import { registerUser, loginUser, migrateData, updatePassword, getSalt } from './api';
+import { registerUser, loginUser, migrateData, updatePassword, getSalt, resetPassword } from './api';
 
 const SESSION_KEY = 'iwaj_session';
 const TOKEN_KEY = 'iwaj_token';
@@ -104,6 +104,27 @@ export async function changePassword(password: string): Promise<void> {
     try {
       const users = JSON.parse(usersRaw) as Array<{ phone: string; salt?: string; password?: string; passwordHash?: string }>;
       const index = users.findIndex((u) => u.phone === session.phone);
+      if (index !== -1) {
+        users[index].salt = salt;
+        localStorage.setItem('iwaj_users', JSON.stringify(users));
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export async function performResetPassword(phone: string, securityKey: string, password: string): Promise<void> {
+  const salt = generateSalt();
+  const passwordHash = await hashPassword(password, salt);
+  await resetPassword(phone, securityKey, salt, passwordHash);
+
+  // If user has old cache, we can update it
+  const usersRaw = localStorage.getItem('iwaj_users');
+  if (usersRaw) {
+    try {
+      const users = JSON.parse(usersRaw) as Array<{ phone: string; salt?: string; password?: string; passwordHash?: string }>;
+      const index = users.findIndex((u) => u.phone === phone);
       if (index !== -1) {
         users[index].salt = salt;
         localStorage.setItem('iwaj_users', JSON.stringify(users));

@@ -156,6 +156,35 @@ app.get('/api/auth/salt', async (req, res) => {
   }
 });
 
+app.post('/api/auth/reset-password', async (req, res) => {
+  await ensureDb();
+  const { phone, securityKey, salt, passwordHash } = req.body;
+  if (!phone || !securityKey || !salt || !passwordHash) {
+    res.status(400).json({ error: '缺少必要字段' });
+    return;
+  }
+  const expectedKey = process.env.ADMIN_RESET_PIN || '123456';
+  if (securityKey !== expectedKey) {
+    res.status(401).json({ error: '安全密钥不正确' });
+    return;
+  }
+  try {
+    const user = await getRow<UserRow>('SELECT * FROM users WHERE phone = ?', [phone]);
+    if (!user) {
+      res.status(404).json({ error: '用户不存在' });
+      return;
+    }
+    await runQuery(
+      'UPDATE users SET salt = ?, password_hash = ? WHERE phone = ?',
+      [salt, passwordHash, phone]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: '重置密码失败: ' + (error instanceof Error ? error.message : String(error)) });
+  }
+});
+
 
 app.post('/api/auth/migrate', authMiddleware, async (req, res) => {
   await ensureDb();
