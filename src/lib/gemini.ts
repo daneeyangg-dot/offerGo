@@ -4,6 +4,14 @@ interface ApiConfig {
   model: string;
 }
 
+/** 去掉模型有时会输出的 ```json ... ``` 代码块包装，再做 JSON.parse */
+function stripJsonFences(text: string): string {
+  // 匹配 ```json ... ``` 或 ``` ... ```
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
+  return text.trim();
+}
+
 const DEFAULT_CONFIG: ApiConfig = {
   baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   apiKey: "",
@@ -195,7 +203,7 @@ Resume: ${resume}
   }
 
   try {
-    const parsed = JSON.parse(text) as AnalysisResult;
+    const parsed = JSON.parse(stripJsonFences(text)) as AnalysisResult;
     // validate required fields
     if (
       !parsed.roleType ||
@@ -362,7 +370,7 @@ Resume: ${resume}
   if (!text) throw new Error("Empty response from DashScope");
 
   try {
-    const parsed = JSON.parse(text) as { questions: TechnicalQuestion[] };
+    const parsed = JSON.parse(stripJsonFences(text)) as { questions: TechnicalQuestion[] };
     if (!Array.isArray(parsed.questions)) throw new Error("Invalid response structure");
     return parsed.questions;
   } catch (err) {
@@ -414,7 +422,7 @@ Resume: ${resume}
   if (!text) throw new Error("Empty response from DashScope");
 
   try {
-    const parsed = JSON.parse(text) as { questions: BehavioralQuestion[] };
+    const parsed = JSON.parse(stripJsonFences(text)) as { questions: BehavioralQuestion[] };
     if (!Array.isArray(parsed.questions)) throw new Error("Invalid response structure");
     return parsed.questions;
   } catch (err) {
